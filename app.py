@@ -8,8 +8,10 @@ import zipfile
 st.set_page_config(page_title="Hazırlık Okulu Değerlendirme Aracı", layout="wide")
 st.title("🎓 İngilizce Hazırlık Değerlendirme Otomasyonu")
 st.markdown("""
-Bu araç, **Öğrenci Cevapları** ve **Modül Anketi** dosyalarını işleyerek 
-hoca bazlı raporlar ve modül değerlendirme grafikleri oluşturur.
+Bu araç, yüklenen verileri analiz ederek:
+1. **Hoca Değerlendirme Raporu:** Tek bir Excel dosyasında, her hoca için ayrı sekmelerde puanlar ve öğrenci yorumları.
+2. **Modül Değerlendirme Raporu:** Seviye bazlı (A1, A2 vb.) modül memnuniyet analizleri.
+oluşturur.
 """)
 
 # Dosya Yükleme Alanı
@@ -19,119 +21,102 @@ with col1:
 with col2:
     uploaded_module = st.file_uploader("2. 'Module Evaluation Survey.xlsx' dosyasını yükleyin", type=['xlsx', 'csv'])
 
-# Sabitler ve Ayarlar
+# Sabitler
 likert_map = {
     "Strongly Agree": 5, "Agree": 4, "Neither agree, nor disagree": 3,
     "Neutral": 3, "Disagree": 2, "Strongly Disagree": 1
 }
-modules = [1, 2, 3, 4]
 
 def process_files(file_ogrenci, file_module):
-    # --- ZIP Oluşturmak İçin Hafıza Tamponu ---
     zip_buffer = io.BytesIO()
     
-    # BURADAKİ false -> False VE GİRİNTİ HATASI DÜZELTİLDİ
     with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
         
         # ==========================================
-        # 1. HOCA DEĞERLENDİRMELERİ İŞLEME
+        # 1. HOCA DEĞERLENDİRMELERİ (TEK DOSYA - AYRI SHEETLER)
         # ==========================================
         try:
             df_ogrenci = pd.read_csv(file_ogrenci) if file_ogrenci.name.endswith('.csv') else pd.read_excel(file_ogrenci)
             
-            # Soru Sütunlarını Belirle
+            # Sütun Belirleme (Sabit İndeks Varsayımı: 21-37 arası sorular)
             question_cols_ogrenci = df_ogrenci.columns[21:37].tolist()
+            comment_col = "Add any additional comments about the instructor here."
 
             # Likert Dönüşümü
             for col in question_cols_ogrenci:
                 df_ogrenci[col] = df_ogrenci[col].astype(str).str.strip().map(likert_map)
 
-            # KEPP Ortalamaları (Okul Geneli)
-            kepp_avgs = {}
-            for mod in modules:
-                mod_data = df_ogrenci[df_ogrenci['Modül'] == mod]
-                if not mod_data.empty:
-                    kepp_avgs[mod] = mod_data[question_cols_ogrenci].mean()
-                else:
-                    kepp_avgs[mod] = pd.Series([np.nan]*len(question_cols_ogrenci), index=question_cols_ogrenci)
-            
-            kepp_yearly_avg = df_ogrenci[question_cols_ogrenci].mean()
+            # KEPP (Okul) Genel Ortalaması (Dosyadaki tüm verinin ortalaması)
+            kepp_avg_series = df_ogrenci[question_cols_ogrenci].mean()
 
-            # Her Hoca İçin Döngü
+            # Excel Yazıcıyı Başlat (Tek Dosya)
+            inst_output = io.BytesIO()
+            writer_inst = pd.ExcelWriter(inst_output, engine='xlsxwriter', engine_kwargs={'options': {'nan_inf_to_errors': True}})
+            workbook_inst = writer_inst.book
+            
+            # Formatlar
+            header_fmt = workbook_inst.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'bg_color': '#D9E1F2', 'border': 1})
+            cell_fmt = workbook_inst.add_format({'num_format': '0.00', 'align': 'center', 'border': 1})
+            text_fmt = workbook_inst.add_format({'border': 1, 'text_wrap': True})
+            comment_header_fmt = workbook_inst.add_format({'bold': True, 'bg_color': '#FFEB9C', 'border': 1}) # Yorum başlığı için sarı ton
+            comment_text_fmt = workbook_inst.add_format({'text_wrap': True, 'border': 1, 'valign': 'top'})
+
             instructors = df_ogrenci['Öğretim Elemanı'].dropna().unique()
-            
+
             for instructor in instructors:
-                clean_name = str(instructor).strip().replace('/', '-').replace('\\', '-').replace('_', ' ')
+                # Sheet ismi temizliği (Excel max 31 karakter)
+                clean_name = str(instructor).strip().replace('/', '-').replace('\\', '-').replace('_', ' ')[:31]
                 
-                # Excel'i Hafızada Oluştur
-                output = io.BytesIO()
-                writer = pd.ExcelWriter(output, engine='xlsxwriter', engine_kwargs={'options': {'nan_inf_to_errors': True}})
-                workbook = writer.book
-                
-                # Formatlar
-                header_fmt = workbook.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'bg_color': '#D9E1F2', 'border': 1})
-                cell_fmt = workbook.add_format({'num_format': '0.00', 'align': 'center', 'border': 1})
-                text_fmt = workbook.add_format({'border': 1, 'text_wrap': True})
-
                 inst_data = df_ogrenci[df_ogrenci['Öğretim Elemanı'] == instructor]
-
-                # --- TOTAL SHEET ---
-                inst_yearly_avg = inst_data[question_cols_ogrenci].mean()
-                df_total = pd.DataFrame({
-                    'THE INSTRUCTOR…': question_cols_ogrenci,
-                    'YOUR AVERAGE': inst_yearly_avg.values,
-                    'KEPP AVERAGE': kepp_yearly_avg.values
-                })
-                df_total.to_excel(writer, sheet_name='TOTAL', index=False, startrow=1)
                 
-                worksheet = writer.sheets['TOTAL']
+                # --- A. PUAN TABLOSU ---
+                inst_avg_series = inst_data[question_cols_ogrenci].mean()
+                
+                df_scores = pd.DataFrame({
+                    'THE INSTRUCTOR…': question_cols_ogrenci,
+                    'YOUR AVERAGE': inst_avg_series.values,
+                    'KEPP AVERAGE': kepp_avg_series.values
+                })
+
+                # Veriyi Sheet'e Yaz
+                df_scores.to_excel(writer_inst, sheet_name=clean_name, index=False, startrow=1)
+                worksheet = writer_inst.sheets[clean_name]
+
+                # Sütun Genişlikleri
                 worksheet.set_column('A:A', 60)
                 worksheet.set_column('B:C', 15)
-                
-                for col_num, value in enumerate(df_total.columns.values):
+
+                # Formatları Uygula (Başlıklar ve Hücreler)
+                for col_num, value in enumerate(df_scores.columns.values):
                     worksheet.write(0, col_num, value, header_fmt)
-                for row_num in range(len(df_total)):
-                    worksheet.write(row_num + 1, 0, df_total.iloc[row_num, 0], text_fmt)
-                    worksheet.write(row_num + 1, 1, df_total.iloc[row_num, 1] if pd.notna(df_total.iloc[row_num, 1]) else "-", cell_fmt)
-                    worksheet.write(row_num + 1, 2, df_total.iloc[row_num, 2] if pd.notna(df_total.iloc[row_num, 2]) else "-", cell_fmt)
+                
+                for row_num in range(len(df_scores)):
+                    worksheet.write(row_num + 1, 0, df_scores.iloc[row_num, 0], text_fmt)
+                    worksheet.write(row_num + 1, 1, df_scores.iloc[row_num, 1] if pd.notna(df_scores.iloc[row_num, 1]) else "-", cell_fmt)
+                    worksheet.write(row_num + 1, 2, df_scores.iloc[row_num, 2] if pd.notna(df_scores.iloc[row_num, 2]) else "-", cell_fmt)
 
-                # --- MOD SHEETS ---
-                for mod in modules:
-                    sheet_name = f'MOD {mod}'
-                    inst_mod_data = inst_data[inst_data['Modül'] == mod]
+                # --- B. YORUMLAR (COMMENTS) ---
+                # Yorumları çek ve boş olmayanları al
+                comments = inst_data[comment_col].dropna().astype(str).tolist()
+                comments = [c for c in comments if c.strip() not in ['', 'nan', 'NaN']]
+
+                if comments:
+                    start_row = len(df_scores) + 3 # Tablonun 3 satır altı
+                    worksheet.write(start_row, 0, "STUDENT COMMENTS", comment_header_fmt)
                     
-                    if not inst_mod_data.empty:
-                        inst_mod_avg = inst_mod_data[question_cols_ogrenci].mean()
-                    else:
-                        inst_mod_avg = pd.Series([np.nan]*len(question_cols_ogrenci), index=question_cols_ogrenci)
+                    for idx, comment in enumerate(comments):
+                        worksheet.write(start_row + 1 + idx, 0, f"- {comment}", comment_text_fmt)
 
-                    df_mod = pd.DataFrame({
-                        'THE INSTRUCTOR…': question_cols_ogrenci,
-                        'YOUR AVERAGE': inst_mod_avg.values,
-                        'KEPP AVERAGE': kepp_avgs[mod].values
-                    })
-                    df_mod.to_excel(writer, sheet_name=sheet_name, index=False, startrow=1)
-                    
-                    worksheet = writer.sheets[sheet_name]
-                    worksheet.set_column('A:A', 60)
-                    worksheet.set_column('B:C', 15)
-                    for col_num, value in enumerate(df_mod.columns.values):
-                        worksheet.write(0, col_num, value, header_fmt)
-                    for row_num in range(len(df_mod)):
-                        worksheet.write(row_num + 1, 0, df_mod.iloc[row_num, 0], text_fmt)
-                        worksheet.write(row_num + 1, 1, df_mod.iloc[row_num, 1] if pd.notna(df_mod.iloc[row_num, 1]) else "-", cell_fmt)
-                        worksheet.write(row_num + 1, 2, df_mod.iloc[row_num, 2] if pd.notna(df_mod.iloc[row_num, 2]) else "-", cell_fmt)
-
-                writer.close()
-                output.seek(0)
-                zip_file.writestr(f"Instructor_Evaluations/{clean_name}.xlsx", output.getvalue())
+            writer_inst.close()
+            inst_output.seek(0)
+            zip_file.writestr("Instructor_Evaluations.xlsx", inst_output.getvalue())
 
         except Exception as e:
-            st.error(f"Öğrenci dosyası işlenirken hata oluştu: {e}")
+            st.error(f"Hoca değerlendirme dosyası işlenirken hata: {e}")
             return None
 
         # ==========================================
-        # 2. MODÜL ANKETİ İŞLEME
+        # 2. MODÜL ANKETİ İŞLEME (AYNEN KORUNDU)
         # ==========================================
         try:
             df_module = pd.read_csv(file_module) if file_module.name.endswith('.csv') else pd.read_excel(file_module)
@@ -152,7 +137,7 @@ def process_files(file_ogrenci, file_module):
             
             for level in levels:
                 sheet_name = level
-                # Level sütunu için index 19 kullanılıyor, temizlik yapılıyor
+                # Level verisini temizle
                 df_module['clean_level'] = df_module.iloc[:, 19].astype(str).str.strip()
                 level_data = df_module[df_module['clean_level'] == level]
 
@@ -172,7 +157,7 @@ def process_files(file_ogrenci, file_module):
                         val = means.iloc[row_num, 1]
                         worksheet.write(row_num + 1, 1, val if pd.notna(val) else "-", cell_fmt_mod)
                     
-                    # Grafik Ekleme
+                    # Grafik
                     chart = workbook_mod.add_chart({'type': 'column'})
                     chart.add_series({
                         'name': 'Average Score',
@@ -194,7 +179,7 @@ def process_files(file_ogrenci, file_module):
             zip_file.writestr("Module_Evaluation_Report.xlsx", mod_output.getvalue())
 
         except Exception as e:
-            st.error(f"Modül anketi dosyası işlenirken hata oluştu: {e}")
+            st.error(f"Modül anketi dosyası işlenirken hata: {e}")
             return None
 
     zip_buffer.seek(0)
@@ -207,9 +192,9 @@ if st.button("🚀 Raporları Oluştur"):
             result_zip = process_files(uploaded_ogrenci, uploaded_module)
             
             if result_zip:
-                st.success("İşlem tamamlandı!")
+                st.success("İşlem tamamlandı! Dosyalar hazır.")
                 st.download_button(
-                    label="📥 Tüm Raporları İndir (ZIP)",
+                    label="📥 Raporları İndir (ZIP)",
                     data=result_zip,
                     file_name="Hazirlik_Degerlendirme_Raporlari.zip",
                     mime="application/zip"
