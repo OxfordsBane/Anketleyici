@@ -38,18 +38,22 @@ def process_files(file_ogrenci, file_module):
         try:
             df_ogrenci = pd.read_csv(file_ogrenci) if file_ogrenci.name.endswith('.csv') else pd.read_excel(file_ogrenci)
             
-            # Sütun Belirleme (Sabit İndeks Varsayımı: 21-37 arası sorular)
+            # Sütun Belirleme
+            # 1. Soru Sütunları (İndeks 21-37 arası varsayımı)
             question_cols_ogrenci = df_ogrenci.columns[21:37].tolist()
+            # 2. Yorum Sütunu
             comment_col = "Add any additional comments about the instructor here."
+            # 3. Sınıf Sütunu (Gruplama için)
+            class_col = "Write your class code. (E.g. B1.01)"
 
             # Likert Dönüşümü
             for col in question_cols_ogrenci:
                 df_ogrenci[col] = df_ogrenci[col].astype(str).str.strip().map(likert_map)
 
-            # KEPP (Okul) Genel Ortalaması (Dosyadaki tüm verinin ortalaması)
+            # KEPP (Okul) Genel Ortalaması
             kepp_avg_series = df_ogrenci[question_cols_ogrenci].mean()
 
-            # Excel Yazıcıyı Başlat (Tek Dosya)
+            # Excel Yazıcıyı Başlat
             inst_output = io.BytesIO()
             writer_inst = pd.ExcelWriter(inst_output, engine='xlsxwriter', engine_kwargs={'options': {'nan_inf_to_errors': True}})
             workbook_inst = writer_inst.book
@@ -58,13 +62,16 @@ def process_files(file_ogrenci, file_module):
             header_fmt = workbook_inst.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'bg_color': '#D9E1F2', 'border': 1})
             cell_fmt = workbook_inst.add_format({'num_format': '0.00', 'align': 'center', 'border': 1})
             text_fmt = workbook_inst.add_format({'border': 1, 'text_wrap': True})
-            comment_header_fmt = workbook_inst.add_format({'bold': True, 'bg_color': '#FFEB9C', 'border': 1}) # Yorum başlığı için sarı ton
+            
+            # Yorum Formatları
+            comment_main_header_fmt = workbook_inst.add_format({'bold': True, 'bg_color': '#FFEB9C', 'border': 1, 'align': 'left'})
+            class_header_fmt = workbook_inst.add_format({'bold': True, 'align': 'center', 'bg_color': '#E2EFDA', 'border': 1}) # Sınıf başlığı için yeşil ton
             comment_text_fmt = workbook_inst.add_format({'text_wrap': True, 'border': 1, 'valign': 'top'})
 
             instructors = df_ogrenci['Öğretim Elemanı'].dropna().unique()
 
             for instructor in instructors:
-                # Sheet ismi temizliği (Excel max 31 karakter)
+                # Sheet ismi temizliği
                 clean_name = str(instructor).strip().replace('/', '-').replace('\\', '-').replace('_', ' ')[:31]
                 
                 inst_data = df_ogrenci[df_ogrenci['Öğretim Elemanı'] == instructor]
@@ -86,7 +93,7 @@ def process_files(file_ogrenci, file_module):
                 worksheet.set_column('A:A', 60)
                 worksheet.set_column('B:C', 15)
 
-                # Formatları Uygula (Başlıklar ve Hücreler)
+                # Formatları Uygula
                 for col_num, value in enumerate(df_scores.columns.values):
                     worksheet.write(0, col_num, value, header_fmt)
                 
@@ -95,17 +102,38 @@ def process_files(file_ogrenci, file_module):
                     worksheet.write(row_num + 1, 1, df_scores.iloc[row_num, 1] if pd.notna(df_scores.iloc[row_num, 1]) else "-", cell_fmt)
                     worksheet.write(row_num + 1, 2, df_scores.iloc[row_num, 2] if pd.notna(df_scores.iloc[row_num, 2]) else "-", cell_fmt)
 
-                # --- B. YORUMLAR (COMMENTS) ---
-                # Yorumları çek ve boş olmayanları al
-                comments = inst_data[comment_col].dropna().astype(str).tolist()
-                comments = [c for c in comments if c.strip() not in ['', 'nan', 'NaN']]
-
-                if comments:
-                    start_row = len(df_scores) + 3 # Tablonun 3 satır altı
-                    worksheet.write(start_row, 0, "STUDENT COMMENTS", comment_header_fmt)
+                # --- B. YORUMLAR (SINIF GRUPLU) ---
+                # Sadece gerekli sütunları al ve temizle
+                if comment_col in inst_data.columns and class_col in inst_data.columns:
+                    comments_df = inst_data[[class_col, comment_col]].copy()
+                    # Yorumu boş olanları at
+                    comments_df = comments_df.dropna(subset=[comment_col])
+                    # Sadece boşluk (" ") olanları at
+                    comments_df = comments_df[comments_df[comment_col].str.strip().astype(bool)]
                     
-                    for idx, comment in enumerate(comments):
-                        worksheet.write(start_row + 1 + idx, 0, f"- {comment}", comment_text_fmt)
+                    if not comments_df.empty:
+                        start_row = len(df_scores) + 3
+                        worksheet.write(start_row, 0, "STUDENT COMMENTS", comment_main_header_fmt)
+                        current_row = start_row + 1
+
+                        # Sınıfları bul ve sırala
+                        # (NaN sınıfları 'Unspecified' olarak dolduralım ki hata vermesin)
+                        comments_df[class_col] = comments_df[class_col].fillna("Unspecified").astype(str)
+                        unique_classes = sorted(comments_df[class_col].unique())
+
+                        for cls_name in unique_classes:
+                            # Sınıf Başlığı (Ortalı ve Bold)
+                            # A, B, C sütunlarını birleştirerek başlığı atalım
+                            worksheet.merge_range(current_row, 0, current_row, 2, cls_name, class_header_fmt)
+                            current_row += 1
+                            
+                            # O sınıfa ait yorumlar
+                            cls_comments = comments_df[comments_df[class_col] == cls_name][comment_col].tolist()
+                            
+                            for comment in cls_comments:
+                                # Tire yok, sadece yorum metni
+                                worksheet.write(current_row, 0, str(comment).strip(), comment_text_fmt)
+                                current_row += 1
 
             writer_inst.close()
             inst_output.seek(0)
@@ -116,7 +144,7 @@ def process_files(file_ogrenci, file_module):
             return None
 
         # ==========================================
-        # 2. MODÜL ANKETİ İŞLEME (AYNEN KORUNDU)
+        # 2. MODÜL ANKETİ İŞLEME
         # ==========================================
         try:
             df_module = pd.read_csv(file_module) if file_module.name.endswith('.csv') else pd.read_excel(file_module)
@@ -137,7 +165,6 @@ def process_files(file_ogrenci, file_module):
             
             for level in levels:
                 sheet_name = level
-                # Level verisini temizle
                 df_module['clean_level'] = df_module.iloc[:, 19].astype(str).str.strip()
                 level_data = df_module[df_module['clean_level'] == level]
 
@@ -157,7 +184,6 @@ def process_files(file_ogrenci, file_module):
                         val = means.iloc[row_num, 1]
                         worksheet.write(row_num + 1, 1, val if pd.notna(val) else "-", cell_fmt_mod)
                     
-                    # Grafik
                     chart = workbook_mod.add_chart({'type': 'column'})
                     chart.add_series({
                         'name': 'Average Score',
