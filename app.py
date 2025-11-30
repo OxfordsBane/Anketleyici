@@ -30,7 +30,8 @@ def process_files(file_ogrenci, file_module):
     # --- ZIP Oluşturmak İçin Hafıza Tamponu ---
     zip_buffer = io.BytesIO()
     
-        with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
+    # BURADAKİ false -> False VE GİRİNTİ HATASI DÜZELTİLDİ
+    with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
         
         # ==========================================
         # 1. HOCA DEĞERLENDİRMELERİ İŞLEME
@@ -38,8 +39,7 @@ def process_files(file_ogrenci, file_module):
         try:
             df_ogrenci = pd.read_csv(file_ogrenci) if file_ogrenci.name.endswith('.csv') else pd.read_excel(file_ogrenci)
             
-            # Soru Sütunlarını Belirle (İndekslere göre - Sabit yapı varsayımı)
-            # Not: Dosya yapısı değişirse buradaki indeksleri (21:37) güncellemek gerekir.
+            # Soru Sütunlarını Belirle
             question_cols_ogrenci = df_ogrenci.columns[21:37].tolist()
 
             # Likert Dönüşümü
@@ -136,8 +136,7 @@ def process_files(file_ogrenci, file_module):
         try:
             df_module = pd.read_csv(file_module) if file_module.name.endswith('.csv') else pd.read_excel(file_module)
             question_cols_module = df_module.columns[20:27].tolist()
-            level_col = 'Please choose your level. ' # CSV'de bazen sonunda boşluk olabiliyor, dikkat.
-
+            
             for col in question_cols_module:
                 df_module[col] = df_module[col].astype(str).str.strip().map(likert_map)
             
@@ -153,8 +152,8 @@ def process_files(file_ogrenci, file_module):
             
             for level in levels:
                 sheet_name = level
-                # Level eşleşmesi bazen tam tutmayabilir, string temizliği yapalım
-                df_module['clean_level'] = df_module.iloc[:, 19].astype(str).str.strip() # İndex 19 level column varsayımı
+                # Level sütunu için index 19 kullanılıyor, temizlik yapılıyor
+                df_module['clean_level'] = df_module.iloc[:, 19].astype(str).str.strip()
                 level_data = df_module[df_module['clean_level'] == level]
 
                 if not level_data.empty:
