@@ -30,7 +30,7 @@ def process_files(file_ogrenci, file_module):
     # --- ZIP Oluşturmak İçin Hafıza Tamponu ---
     zip_buffer = io.BytesIO()
     
-    with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, false) as zip_file:
+        with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
         
         # ==========================================
         # 1. HOCA DEĞERLENDİRMELERİ İŞLEME
