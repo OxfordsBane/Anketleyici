@@ -4,7 +4,6 @@ import numpy as np
 import io
 import zipfile
 from datetime import datetime
-import re
 
 # Sayfa Ayarları
 st.set_page_config(page_title="Hazırlık Okulu Değerlendirme Aracı", layout="wide")
@@ -61,8 +60,12 @@ likert_map = {
 }
 
 def clean_column_names(df):
-    """Excel başlıklarındaki gereksiz boşlukları ve tırnakları temizler."""
-    df.columns = df.columns.str.strip().str.replace('"', '').str.replace("'", "")
+    """
+    Excel başlıklarındaki gereksiz boşlukları temizler.
+    DÜZELTME: Tek tırnak (') silme işlemi kaldırıldı, çünkü "doesn't" kelimesini bozuyordu.
+    """
+    # Sadece baştaki/sondaki boşlukları ve varsa çift tırnakları temizle
+    df.columns = df.columns.str.strip().str.replace('"', '')
     return df
 
 def process_files(file_ogrenci, file_module, target_year, target_module):
@@ -93,9 +96,14 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
             else:
                 # --- SÜTUN HAZIRLIK ---
                 available_questions = [q for q in TARGET_QUESTIONS if q in df_ogrenci.columns]
+                
+                # Kontrol amaçlı: Eksik soru varsa konsola yazdırabiliriz (opsiyonel)
+                # missing_qs = set(TARGET_QUESTIONS) - set(available_questions)
+                # if missing_qs: st.write("Bulunamayan Sütunlar:", missing_qs)
+
                 question_cols_ogrenci = available_questions
                 comment_col = "Add any additional comments about the instructor here."
-
+                
                 # Likert Dönüşümü
                 for col in question_cols_ogrenci:
                     df_ogrenci[col] = df_ogrenci[col].astype(str).str.strip().map(likert_map)
@@ -104,19 +112,14 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                 kepp_avg_series = df_ogrenci[question_cols_ogrenci].mean()
                 
                 # --- SINIF ADI OLUŞTURMA (Level Seviye + Level Sınıf) ---
-                # Örnek: A1 + . + 01 = A1.01
                 if 'Level Seviye' in df_ogrenci.columns and 'Level Sınıf' in df_ogrenci.columns:
-                    # Temizlik ve Stringe Çevirme
                     s_seviye = df_ogrenci['Level Seviye'].astype(str).str.strip()
-                    # Level sınıfı bazen float (1.0) gelebilir, onu düzeltelim (1) ve 2 hane yapalım (01)
                     s_sinif = df_ogrenci['Level Sınıf'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
-                    # Tek haneli ise başına 0 ekle (Opsiyonel ama standart görünüm için iyi olur: 1 -> 01)
                     s_sinif = s_sinif.apply(lambda x: x.zfill(2) if x.isdigit() else x)
                     
                     df_ogrenci['Calculated_Class_Code'] = s_seviye + "." + s_sinif
-                    class_col = 'Calculated_Class_Code' # Artık gruplama için bu sütunu kullanacağız
+                    class_col = 'Calculated_Class_Code'
                 else:
-                    # Yedek plan: Eğer sütunlar yoksa eski yönteme dön
                     class_col = "Write your class code. (E.g. B1.01)"
 
                 # Excel Yazma
