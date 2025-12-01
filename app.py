@@ -14,6 +14,8 @@ Bu araç, seçilen **Yıl** ve **Modül** kriterlerine göre verileri filtreler 
 """)
 
 # --- HEDEF SORU LİSTESİ (SABİT) ---
+# Bu listedeki soruların sıralaması Excel çıktısında korunur.
+# Tekrar eden sorular listeden çıkartılmıştır.
 TARGET_QUESTIONS = [
     "comes prepared with materials to be used in lessons.",
     "starts and ends lessons on time.",
@@ -60,11 +62,8 @@ likert_map = {
 }
 
 def clean_column_names(df):
-    """
-    Excel başlıklarındaki gereksiz boşlukları temizler.
-    DÜZELTME: Tek tırnak (') silme işlemi kaldırıldı, çünkü "doesn't" kelimesini bozuyordu.
-    """
-    # Sadece baştaki/sondaki boşlukları ve varsa çift tırnakları temizle
+    """Excel başlıklarındaki gereksiz boşlukları ve tırnakları temizler."""
+    # Sadece çift tırnakları ve boşlukları temizle (tek tırnak kalmalı)
     df.columns = df.columns.str.strip().str.replace('"', '')
     return df
 
@@ -95,15 +94,17 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                 st.warning(f"⚠️ Hoca Değerlendirme dosyasında kriterlere uygun veri bulunamadı!")
             else:
                 # --- SÜTUN HAZIRLIK ---
-                available_questions = [q for q in TARGET_QUESTIONS if q in df_ogrenci.columns]
+                # Sadece hedef listedeki soruları al
+                available_questions = []
+                seen = set()
+                for q in TARGET_QUESTIONS:
+                    if q in df_ogrenci.columns and q not in seen:
+                        available_questions.append(q)
+                        seen.add(q)
                 
-                # Kontrol amaçlı: Eksik soru varsa konsola yazdırabiliriz (opsiyonel)
-                # missing_qs = set(TARGET_QUESTIONS) - set(available_questions)
-                # if missing_qs: st.write("Bulunamayan Sütunlar:", missing_qs)
-
                 question_cols_ogrenci = available_questions
                 comment_col = "Add any additional comments about the instructor here."
-                
+
                 # Likert Dönüşümü
                 for col in question_cols_ogrenci:
                     df_ogrenci[col] = df_ogrenci[col].astype(str).str.strip().map(likert_map)
@@ -111,7 +112,7 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                 # KEPP (Okul) Genel Ortalaması
                 kepp_avg_series = df_ogrenci[question_cols_ogrenci].mean()
                 
-                # --- SINIF ADI OLUŞTURMA (Level Seviye + Level Sınıf) ---
+                # --- SINIF ADI OLUŞTURMA ---
                 if 'Level Seviye' in df_ogrenci.columns and 'Level Sınıf' in df_ogrenci.columns:
                     s_seviye = df_ogrenci['Level Seviye'].astype(str).str.strip()
                     s_sinif = df_ogrenci['Level Sınıf'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
@@ -132,6 +133,7 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                 cell_fmt = workbook_inst.add_format({'num_format': '0.00', 'align': 'center', 'border': 1})
                 text_fmt = workbook_inst.add_format({'border': 1, 'text_wrap': True})
                 comment_main_header_fmt = workbook_inst.add_format({'bold': True, 'bg_color': '#FFEB9C', 'border': 1, 'align': 'left'})
+                # Sınıf başlığı formatı (Artık sadece A sütunu için, sola yaslı veya ortalı tercih edilebilir)
                 class_header_fmt = workbook_inst.add_format({'bold': True, 'align': 'center', 'bg_color': '#E2EFDA', 'border': 1})
                 comment_text_fmt = workbook_inst.add_format({'text_wrap': True, 'border': 1, 'valign': 'top'})
 
@@ -176,8 +178,10 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                             unique_classes = sorted(comments_df[class_col].unique())
 
                             for cls_name in unique_classes:
-                                worksheet.merge_range(current_row, 0, current_row, 2, cls_name, class_header_fmt)
+                                # DÜZELTME: Sadece A sütununa (0. indeks) yazıyoruz, merge (birleştirme) yok.
+                                worksheet.write(current_row, 0, cls_name, class_header_fmt)
                                 current_row += 1
+                                
                                 cls_comments = comments_df[comments_df[class_col] == cls_name][comment_col].tolist()
                                 for comment in cls_comments:
                                     worksheet.write(current_row, 0, str(comment).strip(), comment_text_fmt)
