@@ -4,6 +4,7 @@ import numpy as np
 import io
 import zipfile
 from datetime import datetime
+import re
 
 # Sayfa Ayarları
 st.set_page_config(page_title="Hazırlık Okulu Değerlendirme Aracı", layout="wide")
@@ -90,16 +91,33 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
             if df_ogrenci.empty:
                 st.warning(f"⚠️ Hoca Değerlendirme dosyasında kriterlere uygun veri bulunamadı!")
             else:
-                # Sütun Seçimi
+                # --- SÜTUN HAZIRLIK ---
                 available_questions = [q for q in TARGET_QUESTIONS if q in df_ogrenci.columns]
                 question_cols_ogrenci = available_questions
                 comment_col = "Add any additional comments about the instructor here."
-                class_col = "Write your class code. (E.g. B1.01)"
 
+                # Likert Dönüşümü
                 for col in question_cols_ogrenci:
                     df_ogrenci[col] = df_ogrenci[col].astype(str).str.strip().map(likert_map)
 
+                # KEPP (Okul) Genel Ortalaması
                 kepp_avg_series = df_ogrenci[question_cols_ogrenci].mean()
+                
+                # --- SINIF ADI OLUŞTURMA (Level Seviye + Level Sınıf) ---
+                # Örnek: A1 + . + 01 = A1.01
+                if 'Level Seviye' in df_ogrenci.columns and 'Level Sınıf' in df_ogrenci.columns:
+                    # Temizlik ve Stringe Çevirme
+                    s_seviye = df_ogrenci['Level Seviye'].astype(str).str.strip()
+                    # Level sınıfı bazen float (1.0) gelebilir, onu düzeltelim (1) ve 2 hane yapalım (01)
+                    s_sinif = df_ogrenci['Level Sınıf'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+                    # Tek haneli ise başına 0 ekle (Opsiyonel ama standart görünüm için iyi olur: 1 -> 01)
+                    s_sinif = s_sinif.apply(lambda x: x.zfill(2) if x.isdigit() else x)
+                    
+                    df_ogrenci['Calculated_Class_Code'] = s_seviye + "." + s_sinif
+                    class_col = 'Calculated_Class_Code' # Artık gruplama için bu sütunu kullanacağız
+                else:
+                    # Yedek plan: Eğer sütunlar yoksa eski yönteme dön
+                    class_col = "Write your class code. (E.g. B1.01)"
 
                 # Excel Yazma
                 inst_output = io.BytesIO()
@@ -200,9 +218,8 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                 text_fmt_mod = workbook_mod.add_format({'border': 1, 'text_wrap': True})
                 comment_header_mod = workbook_mod.add_format({'bold': True, 'bg_color': '#BDD7EE', 'border': 1})
 
-                # --- 1. OVERALL SHEET (TÜM SEVİYELERİN ORTALAMASI) ---
+                # --- 1. OVERALL SHEET ---
                 sheet_name = "OVERALL"
-                # Tüm veriden ortalama al
                 means_total = df_module[question_cols_module].mean().reset_index()
                 means_total.columns = ['Question', 'Average Score']
                 means_total.to_excel(writer_mod, sheet_name=sheet_name, index=False, startrow=1)
@@ -218,7 +235,6 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                     val = means_total.iloc[row_num, 1]
                     worksheet.write(row_num + 1, 1, val if pd.notna(val) else "-", cell_fmt_mod)
                 
-                # Grafik
                 chart = workbook_mod.add_chart({'type': 'column'})
                 chart.add_series({
                     'name': 'Average Score',
@@ -232,7 +248,6 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                 chart.set_size({'width': 700, 'height': 400})
                 worksheet.insert_chart('D2', chart)
                 
-                # Tüm Yorumlar
                 if comment_col_mod:
                     all_comments = df_module[comment_col_mod].dropna().astype(str).tolist()
                     all_comments = [c for c in all_comments if c.strip()]
