@@ -14,8 +14,6 @@ Bu araç, seçilen **Yıl** ve **Modül** kriterlerine göre verileri filtreler 
 """)
 
 # --- HEDEF SORU LİSTESİ (SABİT) ---
-# Bu listedeki soruların sıralaması Excel çıktısında korunur.
-# Tekrar eden sorular listeden çıkartılmıştır.
 TARGET_QUESTIONS = [
     "comes prepared with materials to be used in lessons.",
     "starts and ends lessons on time.",
@@ -38,32 +36,26 @@ TARGET_QUESTIONS = [
 # --- ARAYÜZ ---
 st.sidebar.header("📊 Filtreleme Seçenekleri")
 
-# 1. Yıl Seçimi
 current_year = datetime.now().year
 years = list(range(current_year - 1, current_year + 3)) 
 selected_year = st.sidebar.selectbox("📅 Yıl Seçiniz (Anket Tarihi)", years, index=1)
-
-# 2. Modül Seçimi
 selected_module = st.sidebar.selectbox("Nx Modül Seçiniz", [1, 2, 3, 4, 5])
 
 st.info(f"Şu an **{selected_year}** yılı **{selected_module}. Modül** verileri için rapor oluşturulacak.")
 
-# Dosya Yükleme Alanı
 col1, col2 = st.columns(2)
 with col1:
     uploaded_ogrenci = st.file_uploader("1. 'ogrenci_cevaplari.xlsx' dosyasını yükleyin", type=['xlsx', 'csv'])
 with col2:
     uploaded_module = st.file_uploader("2. 'Module Evaluation Survey.xlsx' dosyasını yükleyin", type=['xlsx', 'csv'])
 
-# Sabitler
 likert_map = {
     "Strongly Agree": 5, "Agree": 4, "Neither agree, nor disagree": 3,
     "Neutral": 3, "Disagree": 2, "Strongly Disagree": 1
 }
 
 def clean_column_names(df):
-    """Excel başlıklarındaki gereksiz boşlukları ve tırnakları temizler."""
-    # Sadece çift tırnakları ve boşlukları temizle (tek tırnak kalmalı)
+    # Sadece çift tırnakları ve gereksiz boşlukları temizle (tek tırnak kalmalı)
     df.columns = df.columns.str.strip().str.replace('"', '')
     return df
 
@@ -93,8 +85,7 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
             if df_ogrenci.empty:
                 st.warning(f"⚠️ Hoca Değerlendirme dosyasında kriterlere uygun veri bulunamadı!")
             else:
-                # --- SÜTUN HAZIRLIK ---
-                # Sadece hedef listedeki soruları al
+                # Soru Sütunlarını Belirle
                 available_questions = []
                 seen = set()
                 for q in TARGET_QUESTIONS:
@@ -109,33 +100,37 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                 for col in question_cols_ogrenci:
                     df_ogrenci[col] = df_ogrenci[col].astype(str).str.strip().map(likert_map)
 
-                # KEPP (Okul) Genel Ortalaması
+                # KEPP Ortalaması
                 kepp_avg_series = df_ogrenci[question_cols_ogrenci].mean()
                 
-                # --- SINIF ADI OLUŞTURMA ---
+                # Sınıf Adı Oluşturma
                 if 'Level Seviye' in df_ogrenci.columns and 'Level Sınıf' in df_ogrenci.columns:
                     s_seviye = df_ogrenci['Level Seviye'].astype(str).str.strip()
                     s_sinif = df_ogrenci['Level Sınıf'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
                     s_sinif = s_sinif.apply(lambda x: x.zfill(2) if x.isdigit() else x)
-                    
                     df_ogrenci['Calculated_Class_Code'] = s_seviye + "." + s_sinif
                     class_col = 'Calculated_Class_Code'
                 else:
                     class_col = "Write your class code. (E.g. B1.01)"
 
-                # Excel Yazma
+                # Excel Başlat
                 inst_output = io.BytesIO()
                 writer_inst = pd.ExcelWriter(inst_output, engine='xlsxwriter', engine_kwargs={'options': {'nan_inf_to_errors': True}})
                 workbook_inst = writer_inst.book
                 
-                # Formatlar
+                # --- FORMATLAR ---
                 header_fmt = workbook_inst.add_format({'bold': True, 'align': 'center', 'valign': 'vcenter', 'bg_color': '#D9E1F2', 'border': 1})
                 cell_fmt = workbook_inst.add_format({'num_format': '0.00', 'align': 'center', 'border': 1})
                 text_fmt = workbook_inst.add_format({'border': 1, 'text_wrap': True})
                 comment_main_header_fmt = workbook_inst.add_format({'bold': True, 'bg_color': '#FFEB9C', 'border': 1, 'align': 'left'})
-                # Sınıf başlığı formatı (Artık sadece A sütunu için, sola yaslı veya ortalı tercih edilebilir)
-                class_header_fmt = workbook_inst.add_format({'bold': True, 'align': 'center', 'bg_color': '#E2EFDA', 'border': 1})
                 comment_text_fmt = workbook_inst.add_format({'text_wrap': True, 'border': 1, 'valign': 'top'})
+
+                # RENKLİ SEVİYE FORMATLARI (Yazı: Beyaz, Bold, Center)
+                fmt_a1 = workbook_inst.add_format({'bg_color': '#F5BD02', 'font_color': 'white', 'bold': True, 'align': 'center', 'border': 1})
+                fmt_a2 = workbook_inst.add_format({'bg_color': '#F07F09', 'font_color': 'white', 'bold': True, 'align': 'center', 'border': 1})
+                fmt_b1 = workbook_inst.add_format({'bg_color': '#9F2936', 'font_color': 'white', 'bold': True, 'align': 'center', 'border': 1})
+                fmt_b2 = workbook_inst.add_format({'bg_color': '#4E8542', 'font_color': 'white', 'bold': True, 'align': 'center', 'border': 1})
+                fmt_default = workbook_inst.add_format({'bg_color': '#E2EFDA', 'bold': True, 'align': 'center', 'border': 1})
 
                 instructors = df_ogrenci['Öğretim Elemanı'].dropna().unique()
 
@@ -178,8 +173,23 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                             unique_classes = sorted(comments_df[class_col].unique())
 
                             for cls_name in unique_classes:
-                                # DÜZELTME: Sadece A sütununa (0. indeks) yazıyoruz, merge (birleştirme) yok.
-                                worksheet.write(current_row, 0, cls_name, class_header_fmt)
+                                # Seviyeyi belirle (A1, A2...)
+                                level_prefix = cls_name.split('.')[0].upper()
+                                
+                                # Rengi Seç
+                                if level_prefix == 'A1':
+                                    current_fmt = fmt_a1
+                                elif level_prefix == 'A2':
+                                    current_fmt = fmt_a2
+                                elif level_prefix == 'B1':
+                                    current_fmt = fmt_b1
+                                elif level_prefix == 'B2':
+                                    current_fmt = fmt_b2
+                                else:
+                                    current_fmt = fmt_default
+
+                                # Sınıf Başlığını Yaz (Sadece A Sütunu)
+                                worksheet.write(current_row, 0, cls_name, current_fmt)
                                 current_row += 1
                                 
                                 cls_comments = comments_df[comments_df[class_col] == cls_name][comment_col].tolist()
@@ -264,7 +274,7 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                         for idx, com in enumerate(all_comments):
                             worksheet.write(comment_start_row + 1 + idx, 0, com, text_fmt_mod)
 
-                # --- 2. INDIVIDUAL LEVEL SHEETS ---
+                # --- 2. LEVEL SHEETS ---
                 levels = ['A1', 'A2', 'B1', 'B2']
                 for level in levels:
                     sheet_name = level
