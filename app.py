@@ -13,8 +13,29 @@ Bu araç, seçilen **Yıl** ve **Modül** kriterlerine göre verileri filtreler 
 **Not:** "T" ile başlayan seviyeler (Örn: T1, T2) otomatik olarak değerlendirme dışı bırakılır.
 """)
 
-# --- ARAYÜZ (FİLTRELER VE DOSYA YÜKLEME) ---
+# --- HEDEF SORU LİSTESİ (SABİT) ---
+# Raporda görünmesini istediğimiz soruları buraya tam metin olarak yazıyoruz.
+# Kod sadece bu soruları arayacak, diğerlerini (Level, Class Code vb.) görmezden gelecek.
+TARGET_QUESTIONS = [
+    "comes prepared with materials to be used in lessons.",
+    "starts and ends lessons on time.",
+    "teaches the course content clearly.",
+    "speaks English clearly and comprehensibly.",
+    "has an attitude that supports student learning outside the classroom.",
+    "encourages students to participate in class.",
+    "keeps a regular record of student attendance and timeliness.",
+    "uses class time efficiently and effectively.",
+    "uses office hours efficiently and fairly.",
+    "has adapted to technological advancements.",
+    "enters and announces the necessary records. (Attendance, grades, scores, etc.)",
+    "doesn't speak Turkish in class unless necessary.",
+    "is good at classroom management.",
+    "displays a positive and caring attitude.",
+    "has good overall performance.",
+    "creates a motivating and convenient learning environment in class."
+]
 
+# --- ARAYÜZ (FİLTRELER VE DOSYA YÜKLEME) ---
 st.sidebar.header("📊 Filtreleme Seçenekleri")
 
 # 1. Yıl Seçimi
@@ -40,6 +61,11 @@ likert_map = {
     "Neutral": 3, "Disagree": 2, "Strongly Disagree": 1
 }
 
+def clean_column_names(df):
+    """Excel başlıklarındaki gereksiz boşlukları ve tırnakları temizler."""
+    df.columns = df.columns.str.strip().str.replace('"', '').str.replace("'", "")
+    return df
+
 def process_files(file_ogrenci, file_module, target_year, target_module):
     zip_buffer = io.BytesIO()
     
@@ -50,6 +76,7 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
         # ==========================================
         try:
             df_ogrenci = pd.read_csv(file_ogrenci) if file_ogrenci.name.endswith('.csv') else pd.read_excel(file_ogrenci)
+            df_ogrenci = clean_column_names(df_ogrenci)
             
             # --- FİLTRELEME ADIMLARI ---
             
@@ -69,32 +96,26 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
             if df_ogrenci.empty:
                 st.warning(f"⚠️ Hoca Değerlendirme dosyasında kriterlere uygun veri bulunamadı! ('T' seviyeleri hariç tutuldu)")
             else:
-                # --- SÜTUN BELİRLEME VE TEMİZLİK ---
+                # --- SÜTUN SEÇİMİ (SABİT LİSTE) ---
+                # Dataframe'de mevcut olan hedef soruları bul
+                available_questions = [q for q in TARGET_QUESTIONS if q in df_ogrenci.columns]
                 
-                # Tüm olası soru sütunlarını al (21 ile 37 arası)
-                raw_question_cols = df_ogrenci.columns[21:37].tolist()
+                # Eksik soru varsa uyar (Opsiyonel)
+                if len(available_questions) < len(TARGET_QUESTIONS):
+                    missing = set(TARGET_QUESTIONS) - set(available_questions)
+                    # st.warning(f"Bazı sorular excelde bulunamadı: {missing}") 
                 
-                # ÇIKARILACAK SÜTUNLAR LİSTESİ
-                # Kullanıcının istemediği veya metadata olan sütunlar
-                exclude_cols = [
-                    "Level Sınıf",
-                    "Write your class code. (E.g. B1.01)",
-                    "displays a positive and caring attitude" # Bu mükerrer veya istenmeyen bir satır
-                ]
-                
-                # Sadece hesaplamaya katılacak soruları filtrele
-                question_cols_ogrenci = [col for col in raw_question_cols if col not in exclude_cols]
+                question_cols_ogrenci = available_questions
 
                 # Diğer önemli sütunlar
                 comment_col = "Add any additional comments about the instructor here."
-                class_col = "Write your class code. (E.g. B1.01)" # Yorumları gruplamak için kullanılacak
+                class_col = "Write your class code. (E.g. B1.01)"
 
-                # Likert Dönüşümü (Sadece seçili sorularda)
+                # Likert Dönüşümü
                 for col in question_cols_ogrenci:
-                    if col in df_ogrenci.columns:
-                        df_ogrenci[col] = df_ogrenci[col].astype(str).str.strip().map(likert_map)
+                    df_ogrenci[col] = df_ogrenci[col].astype(str).str.strip().map(likert_map)
 
-                # KEPP (Okul) Genel Ortalaması (Filtrelenmiş sorular üzerinden)
+                # KEPP (Okul) Genel Ortalaması
                 kepp_avg_series = df_ogrenci[question_cols_ogrenci].mean()
 
                 # Excel Oluşturma
@@ -139,11 +160,9 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                         worksheet.write(row_num + 1, 2, df_scores.iloc[row_num, 2] if pd.notna(df_scores.iloc[row_num, 2]) else "-", cell_fmt)
 
                     # --- YORUMLAR (SINIF GRUPLU) ---
-                    # class_col ve comment_col varlığını kontrol et
                     if comment_col in inst_data.columns and class_col in inst_data.columns:
                         comments_df = inst_data[[class_col, comment_col]].copy()
                         comments_df = comments_df.dropna(subset=[comment_col])
-                        # Sadece boşluk olan yorumları temizle
                         comments_df = comments_df[comments_df[comment_col].str.strip().astype(bool)]
                         
                         if not comments_df.empty:
@@ -151,7 +170,6 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                             worksheet.write(start_row, 0, "STUDENT COMMENTS", comment_main_header_fmt)
                             current_row = start_row + 1
 
-                            # Sınıf isimlerini temizle (NaN ise 'Unspecified' yap)
                             comments_df[class_col] = comments_df[class_col].fillna("Unspecified").astype(str).str.strip()
                             unique_classes = sorted(comments_df[class_col].unique())
 
@@ -160,7 +178,6 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                                 worksheet.merge_range(current_row, 0, current_row, 2, cls_name, class_header_fmt)
                                 current_row += 1
                                 
-                                # O sınıfa ait yorumlar
                                 cls_comments = comments_df[comments_df[class_col] == cls_name][comment_col].tolist()
                                 for comment in cls_comments:
                                     worksheet.write(current_row, 0, str(comment).strip(), comment_text_fmt)
@@ -179,7 +196,8 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
         # ==========================================
         try:
             df_module = pd.read_csv(file_module) if file_module.name.endswith('.csv') else pd.read_excel(file_module)
-            
+            df_module = clean_column_names(df_module)
+
             # --- FİLTRELEME ADIMI ---
             df_module['Modül'] = pd.to_numeric(df_module['Modül'], errors='coerce')
             df_module = df_module[df_module['Modül'] == target_module]
@@ -187,20 +205,14 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
             if df_module.empty:
                 st.warning(f"⚠️ Modül Değerlendirme dosyasında {target_module}. Modül için veri bulunamadı!")
             else:
-                # Sütunları Belirle (20-27 arası)
-                # İndeks 26 genelde "Add your comments..." oluyor, onu ortalamadan çıkaracağız.
-                # Sadece ilk 6 soru puanlanabilir soru (Index 20-25 arası)
+                # Sütunları Belirle (Sabit Aralık yerine isimle arayalım veya aralığı güvenli alalım)
+                # İndeks 20-26 arası (İlk 6 soru)
                 question_cols_module = df_module.columns[20:26].tolist()
                 
-                # Yorum sütununu isminden bulmaya çalışalım (genelde sonlarda olur)
-                # "Add your comments" içeren sütunu bul
+                # Yorum sütunu bulma
                 comment_col_mod = [c for c in df_module.columns if "Add your comments" in str(c)]
-                if comment_col_mod:
-                    comment_col_mod = comment_col_mod[0] # İlk eşleşeni al
-                else:
-                    comment_col_mod = None
+                comment_col_mod = comment_col_mod[0] if comment_col_mod else None
 
-                # Likert Dönüşümü
                 for col in question_cols_module:
                     df_module[col] = df_module[col].astype(str).str.strip().map(likert_map)
                 
@@ -251,13 +263,13 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                         chart.set_size({'width': 700, 'height': 400})
                         worksheet.insert_chart('D2', chart)
 
-                        # 3. YORUMLAR (TABLONUN VE GRAFİĞİN ALTINA)
+                        # 3. YORUMLAR
                         if comment_col_mod:
                             mod_comments = level_data[comment_col_mod].dropna().astype(str).tolist()
-                            mod_comments = [c for c in mod_comments if c.strip()] # Boşları at
+                            mod_comments = [c for c in mod_comments if c.strip()]
                             
                             if mod_comments:
-                                comment_start_row = len(means) + 25 # Grafiğin altına denk gelmesi için boşluk
+                                comment_start_row = len(means) + 25 
                                 worksheet.write(comment_start_row, 0, "STUDENT COMMENTS", comment_header_mod)
                                 
                                 for idx, com in enumerate(mod_comments):
