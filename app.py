@@ -10,6 +10,7 @@ st.set_page_config(page_title="Hazırlık Okulu Değerlendirme Aracı", layout="
 st.title("🎓 İngilizce Hazırlık Değerlendirme Otomasyonu")
 st.markdown("""
 Bu araç, seçilen **Yıl** ve **Modül** kriterlerine göre verileri filtreler ve raporları oluşturur.
+**Not:** "T" ile başlayan seviyeler (Örn: T1, T2) otomatik olarak değerlendirme dışı bırakılır.
 """)
 
 # --- ARAYÜZ (FİLTRELER VE DOSYA YÜKLEME) ---
@@ -18,7 +19,6 @@ st.sidebar.header("📊 Filtreleme Seçenekleri")
 
 # 1. Yıl Seçimi
 current_year = datetime.now().year
-# Listeyi genişletebilirsin: [2024, 2025, 2026, 2027...]
 years = list(range(current_year - 1, current_year + 3)) 
 selected_year = st.sidebar.selectbox("📅 Yıl Seçiniz (Anket Tarihi)", years, index=1)
 
@@ -51,20 +51,24 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
         try:
             df_ogrenci = pd.read_csv(file_ogrenci) if file_ogrenci.name.endswith('.csv') else pd.read_excel(file_ogrenci)
             
-            # --- FİLTRELEME ADIMI ---
-            # 1. Modül Filtresi
-            # (Verideki modül sütunu bazen sayı, bazen metin olabilir, garantiye alalım)
+            # --- FİLTRELEME ADIMLARI ---
+            
+            # 1. "T" ile Başlayan Seviyeleri Çıkar (EN ÖNEMLİ ADIM)
+            if 'Level Seviye' in df_ogrenci.columns:
+                # Stringe çevir, boşlukları sil, büyük harfe yap ve T ile başlayanı bulup tersini al (~)
+                df_ogrenci = df_ogrenci[~df_ogrenci['Level Seviye'].astype(str).str.strip().str.upper().str.startswith('T')]
+            
+            # 2. Modül Filtresi
             df_ogrenci['Modül'] = pd.to_numeric(df_ogrenci['Modül'], errors='coerce')
             df_ogrenci = df_ogrenci[df_ogrenci['Modül'] == target_module]
 
-            # 2. Yıl Filtresi (Tarih sütunundan yılı çekiyoruz)
-            # Tarih formatı: '2025-11-20 10:56:02'
+            # 3. Yıl Filtresi
             if 'Tarih' in df_ogrenci.columns:
                 df_ogrenci['Tarih_dt'] = pd.to_datetime(df_ogrenci['Tarih'], errors='coerce')
                 df_ogrenci = df_ogrenci[df_ogrenci['Tarih_dt'].dt.year == target_year]
             
             if df_ogrenci.empty:
-                st.warning(f"⚠️ Hoca Değerlendirme dosyasında {target_year} yılı ve {target_module}. Modül için veri bulunamadı!")
+                st.warning(f"⚠️ Hoca Değerlendirme dosyasında kriterlere uygun veri bulunamadı! ('T' seviyeleri hariç tutuldu)")
             else:
                 # Sütun Tanımları
                 question_cols_ogrenci = df_ogrenci.columns[21:37].tolist()
@@ -75,7 +79,7 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                 for col in question_cols_ogrenci:
                     df_ogrenci[col] = df_ogrenci[col].astype(str).str.strip().map(likert_map)
 
-                # KEPP (Okul) Genel Ortalaması (Filtrelenmiş verinin ortalaması)
+                # KEPP (Okul) Genel Ortalaması (Filtrelenmiş - T'siz veri üzerinden)
                 kepp_avg_series = df_ogrenci[question_cols_ogrenci].mean()
 
                 # Excel Oluşturma
@@ -150,15 +154,18 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
             return None
 
         # ==========================================
-        # 2. MODÜL ANKETİ İŞLEME
+        # 2. MODÜL ANKETİ İŞLEME (AYNEN DEVAM)
         # ==========================================
         try:
             df_module = pd.read_csv(file_module) if file_module.name.endswith('.csv') else pd.read_excel(file_module)
             
             # --- FİLTRELEME ADIMI ---
-            # Sadece Modül Filtresi (Modül Anketi dosyasında tarih sütunu standart olmayabilir)
+            # Sadece Modül Filtresi
             df_module['Modül'] = pd.to_numeric(df_module['Modül'], errors='coerce')
             df_module = df_module[df_module['Modül'] == target_module]
+            
+            # Modül raporunda T seviyeleri zaten 'levels' listesinde olmadığı için otomatik olarak çıkmıyor.
+            # Ancak yine de veri temizliği için filtreleyebiliriz (isteğe bağlı, şu anki yapı zaten hariç tutuyor).
 
             if df_module.empty:
                 st.warning(f"⚠️ Modül Değerlendirme dosyasında {target_module}. Modül için veri bulunamadı!")
