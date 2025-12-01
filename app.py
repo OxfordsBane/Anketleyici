@@ -14,8 +14,6 @@ Bu araç, seçilen **Yıl** ve **Modül** kriterlerine göre verileri filtreler 
 """)
 
 # --- HEDEF SORU LİSTESİ (SABİT) ---
-# Raporda görünmesini istediğimiz soruları buraya tam metin olarak yazıyoruz.
-# Kod sadece bu soruları arayacak, diğerlerini (Level, Class Code vb.) görmezden gelecek.
 TARGET_QUESTIONS = [
     "comes prepared with materials to be used in lessons.",
     "starts and ends lessons on time.",
@@ -35,7 +33,7 @@ TARGET_QUESTIONS = [
     "creates a motivating and convenient learning environment in class."
 ]
 
-# --- ARAYÜZ (FİLTRELER VE DOSYA YÜKLEME) ---
+# --- ARAYÜZ ---
 st.sidebar.header("📊 Filtreleme Seçenekleri")
 
 # 1. Yıl Seçimi
@@ -78,47 +76,32 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
             df_ogrenci = pd.read_csv(file_ogrenci) if file_ogrenci.name.endswith('.csv') else pd.read_excel(file_ogrenci)
             df_ogrenci = clean_column_names(df_ogrenci)
             
-            # --- FİLTRELEME ADIMLARI ---
-            
-            # 1. "T" ile Başlayan Seviyeleri Çıkar
+            # --- FİLTRELEME ---
             if 'Level Seviye' in df_ogrenci.columns:
                 df_ogrenci = df_ogrenci[~df_ogrenci['Level Seviye'].astype(str).str.strip().str.upper().str.startswith('T')]
             
-            # 2. Modül Filtresi
             df_ogrenci['Modül'] = pd.to_numeric(df_ogrenci['Modül'], errors='coerce')
             df_ogrenci = df_ogrenci[df_ogrenci['Modül'] == target_module]
 
-            # 3. Yıl Filtresi
             if 'Tarih' in df_ogrenci.columns:
                 df_ogrenci['Tarih_dt'] = pd.to_datetime(df_ogrenci['Tarih'], errors='coerce')
                 df_ogrenci = df_ogrenci[df_ogrenci['Tarih_dt'].dt.year == target_year]
             
             if df_ogrenci.empty:
-                st.warning(f"⚠️ Hoca Değerlendirme dosyasında kriterlere uygun veri bulunamadı! ('T' seviyeleri hariç tutuldu)")
+                st.warning(f"⚠️ Hoca Değerlendirme dosyasında kriterlere uygun veri bulunamadı!")
             else:
-                # --- SÜTUN SEÇİMİ (SABİT LİSTE) ---
-                # Dataframe'de mevcut olan hedef soruları bul
+                # Sütun Seçimi
                 available_questions = [q for q in TARGET_QUESTIONS if q in df_ogrenci.columns]
-                
-                # Eksik soru varsa uyar (Opsiyonel)
-                if len(available_questions) < len(TARGET_QUESTIONS):
-                    missing = set(TARGET_QUESTIONS) - set(available_questions)
-                    # st.warning(f"Bazı sorular excelde bulunamadı: {missing}") 
-                
                 question_cols_ogrenci = available_questions
-
-                # Diğer önemli sütunlar
                 comment_col = "Add any additional comments about the instructor here."
                 class_col = "Write your class code. (E.g. B1.01)"
 
-                # Likert Dönüşümü
                 for col in question_cols_ogrenci:
                     df_ogrenci[col] = df_ogrenci[col].astype(str).str.strip().map(likert_map)
 
-                # KEPP (Okul) Genel Ortalaması
                 kepp_avg_series = df_ogrenci[question_cols_ogrenci].mean()
 
-                # Excel Oluşturma
+                # Excel Yazma
                 inst_output = io.BytesIO()
                 writer_inst = pd.ExcelWriter(inst_output, engine='xlsxwriter', engine_kwargs={'options': {'nan_inf_to_errors': True}})
                 workbook_inst = writer_inst.book
@@ -137,7 +120,6 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                     clean_name = str(instructor).strip().replace('/', '-').replace('\\', '-').replace('_', ' ')[:31]
                     inst_data = df_ogrenci[df_ogrenci['Öğretim Elemanı'] == instructor]
                     
-                    # --- PUANLAR ---
                     inst_avg_series = inst_data[question_cols_ogrenci].mean()
                     
                     df_scores = pd.DataFrame({
@@ -149,7 +131,6 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                     df_scores.to_excel(writer_inst, sheet_name=clean_name, index=False, startrow=1)
                     worksheet = writer_inst.sheets[clean_name]
                     
-                    # Formatlama
                     worksheet.set_column('A:A', 60)
                     worksheet.set_column('B:C', 15)
                     for col_num, value in enumerate(df_scores.columns.values):
@@ -159,7 +140,7 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                         worksheet.write(row_num + 1, 1, df_scores.iloc[row_num, 1] if pd.notna(df_scores.iloc[row_num, 1]) else "-", cell_fmt)
                         worksheet.write(row_num + 1, 2, df_scores.iloc[row_num, 2] if pd.notna(df_scores.iloc[row_num, 2]) else "-", cell_fmt)
 
-                    # --- YORUMLAR (SINIF GRUPLU) ---
+                    # Yorumlar
                     if comment_col in inst_data.columns and class_col in inst_data.columns:
                         comments_df = inst_data[[class_col, comment_col]].copy()
                         comments_df = comments_df.dropna(subset=[comment_col])
@@ -174,10 +155,8 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                             unique_classes = sorted(comments_df[class_col].unique())
 
                             for cls_name in unique_classes:
-                                # Sınıf Başlığı
                                 worksheet.merge_range(current_row, 0, current_row, 2, cls_name, class_header_fmt)
                                 current_row += 1
-                                
                                 cls_comments = comments_df[comments_df[class_col] == cls_name][comment_col].tolist()
                                 for comment in cls_comments:
                                     worksheet.write(current_row, 0, str(comment).strip(), comment_text_fmt)
@@ -198,18 +177,14 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
             df_module = pd.read_csv(file_module) if file_module.name.endswith('.csv') else pd.read_excel(file_module)
             df_module = clean_column_names(df_module)
 
-            # --- FİLTRELEME ADIMI ---
+            # --- FİLTRELEME ---
             df_module['Modül'] = pd.to_numeric(df_module['Modül'], errors='coerce')
             df_module = df_module[df_module['Modül'] == target_module]
 
             if df_module.empty:
                 st.warning(f"⚠️ Modül Değerlendirme dosyasında {target_module}. Modül için veri bulunamadı!")
             else:
-                # Sütunları Belirle (Sabit Aralık yerine isimle arayalım veya aralığı güvenli alalım)
-                # İndeks 20-26 arası (İlk 6 soru)
                 question_cols_module = df_module.columns[20:26].tolist()
-                
-                # Yorum sütunu bulma
                 comment_col_mod = [c for c in df_module.columns if "Add your comments" in str(c)]
                 comment_col_mod = comment_col_mod[0] if comment_col_mod else None
 
@@ -225,15 +200,56 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                 text_fmt_mod = workbook_mod.add_format({'border': 1, 'text_wrap': True})
                 comment_header_mod = workbook_mod.add_format({'bold': True, 'bg_color': '#BDD7EE', 'border': 1})
 
-                levels = ['A1', 'A2', 'B1', 'B2']
+                # --- 1. OVERALL SHEET (TÜM SEVİYELERİN ORTALAMASI) ---
+                sheet_name = "OVERALL"
+                # Tüm veriden ortalama al
+                means_total = df_module[question_cols_module].mean().reset_index()
+                means_total.columns = ['Question', 'Average Score']
+                means_total.to_excel(writer_mod, sheet_name=sheet_name, index=False, startrow=1)
                 
+                worksheet = writer_mod.sheets[sheet_name]
+                worksheet.set_column('A:A', 70)
+                worksheet.set_column('B:B', 15)
+                worksheet.write(0, 0, 'Question', header_fmt_mod)
+                worksheet.write(0, 1, 'Average Score', header_fmt_mod)
+                
+                for row_num in range(len(means_total)):
+                    worksheet.write(row_num + 1, 0, means_total.iloc[row_num, 0], text_fmt_mod)
+                    val = means_total.iloc[row_num, 1]
+                    worksheet.write(row_num + 1, 1, val if pd.notna(val) else "-", cell_fmt_mod)
+                
+                # Grafik
+                chart = workbook_mod.add_chart({'type': 'column'})
+                chart.add_series({
+                    'name': 'Average Score',
+                    'categories': [sheet_name, 1, 0, len(means_total), 0],
+                    'values': [sheet_name, 1, 1, len(means_total), 1],
+                    'data_labels': {'value': True, 'num_format': '0.00'},
+                    'fill': {'color': '#4472C4'}
+                })
+                chart.set_title({'name': f'OVERALL (All Levels) - Module Evaluation'})
+                chart.set_y_axis({'name': 'Score (1-5)', 'min': 0, 'max': 5})
+                chart.set_size({'width': 700, 'height': 400})
+                worksheet.insert_chart('D2', chart)
+                
+                # Tüm Yorumlar
+                if comment_col_mod:
+                    all_comments = df_module[comment_col_mod].dropna().astype(str).tolist()
+                    all_comments = [c for c in all_comments if c.strip()]
+                    if all_comments:
+                        comment_start_row = len(means_total) + 25 
+                        worksheet.write(comment_start_row, 0, "STUDENT COMMENTS (ALL LEVELS)", comment_header_mod)
+                        for idx, com in enumerate(all_comments):
+                            worksheet.write(comment_start_row + 1 + idx, 0, com, text_fmt_mod)
+
+                # --- 2. INDIVIDUAL LEVEL SHEETS ---
+                levels = ['A1', 'A2', 'B1', 'B2']
                 for level in levels:
                     sheet_name = level
                     df_module['clean_level'] = df_module.iloc[:, 19].astype(str).str.strip()
                     level_data = df_module[df_module['clean_level'] == level]
 
                     if not level_data.empty:
-                        # 1. ORTALAMALAR TABLOSU
                         means = level_data[question_cols_module].mean().reset_index()
                         means.columns = ['Question', 'Average Score']
                         means.to_excel(writer_mod, sheet_name=sheet_name, index=False, startrow=1)
@@ -249,7 +265,6 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                             val = means.iloc[row_num, 1]
                             worksheet.write(row_num + 1, 1, val if pd.notna(val) else "-", cell_fmt_mod)
                         
-                        # 2. GRAFİK
                         chart = workbook_mod.add_chart({'type': 'column'})
                         chart.add_series({
                             'name': 'Average Score',
@@ -263,7 +278,6 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                         chart.set_size({'width': 700, 'height': 400})
                         worksheet.insert_chart('D2', chart)
 
-                        # 3. YORUMLAR
                         if comment_col_mod:
                             mod_comments = level_data[comment_col_mod].dropna().astype(str).tolist()
                             mod_comments = [c for c in mod_comments if c.strip()]
@@ -271,10 +285,8 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
                             if mod_comments:
                                 comment_start_row = len(means) + 25 
                                 worksheet.write(comment_start_row, 0, "STUDENT COMMENTS", comment_header_mod)
-                                
                                 for idx, com in enumerate(mod_comments):
                                     worksheet.write(comment_start_row + 1 + idx, 0, com, text_fmt_mod)
-
                     else:
                         worksheet = workbook_mod.add_worksheet(sheet_name)
                         worksheet.write(0, 0, f"No data for Level {level}")
@@ -290,7 +302,6 @@ def process_files(file_ogrenci, file_module, target_year, target_module):
     zip_buffer.seek(0)
     return zip_buffer
 
-# Buton ve İşlem
 if st.button("🚀 Raporları Oluştur"):
     if uploaded_ogrenci and uploaded_module:
         with st.spinner('Dosyalar işleniyor, lütfen bekleyin...'):
